@@ -1,0 +1,257 @@
+def dados(df):
+    
+    df.loc[len(df)] = [None ,df.yt[len(df)-1]]
+    s1 = np.array(df["yt-1"][1:])
+    s1 = s1.astype(np.float)
+    
+    return s1
+
+def EMD(s1):
+    
+    decompor = emd.sift.sift(s1) #obtém os imf's
+    
+    residuo = s1.copy() #cria uma cópia da série original
+    
+    imf = np.zeros((decompor.shape[0], decompor.shape[1]+1)) #cria uma matriz de zeros, e nela serão guardados os IMFs + resíduo
+    
+    for i in range(decompor.shape[1]): #Laço que obtém o resíduo, ou seja, subtrai todos os IMFs da série original
+        residuo -= decompor[:, i]
+        imf[:,i] = decompor[:, i]
+        
+    imf[:, i+1] = residuo
+    
+    SVM = np.full(imf.shape[1], svm.SVR()) #cria "imf.shape[1]" instâncias do modelo SVM. {imf.shape[1] = qnt de imfs}
+    for i in range(imf.shape[1]): #laço necessário para criar instâncias diferentes, isto é, para não deixar 4 modelos SVM iguais, de forma que uma alteração feita em um não seja feita nos outros
+        SVM[i] = svm.SVR()
+        
+    TREE = np.full(imf.shape[1], tree.DecisionTreeRegressor())
+    for i in range(imf.shape[1]):
+        TREE[i] = tree.DecisionTreeRegressor()
+        
+    MLP = np.full(imf.shape[1], MLPRegressor())
+    for i in range(imf.shape[1]):
+        MLP[i] = MLPRegressor()
+        
+    KNN = np.full(imf.shape[1], KNeighborsRegressor())
+    for i in range(imf.shape[1]):
+        KNN[i] = KNeighborsRegressor()
+    
+    modelos = [SVM, TREE, MLP, KNN] #modelos presentes no algoritmo.
+    n_regressors = len(modelos) #definição da quantidade de modelos de regressão usados no algoritmo
+    
+    y_prev = list(np.full([imf.shape[1], n_regressors, int(np.ceil(len(imf[:,0][:-1])*porcentagem_teste))], float(0))) #armazena a previsão dos dados de teste para cada IMF
+    mse = list(np.full([imf.shape[1], n_regressors], float(0))) #armazena o erro quadrático médio para as regressões de cada imf *(apenas dos dados de teste)
+    mae = list(np.full([imf.shape[1], n_regressors], float(0))) #armazena o erro absoluto médio para as regressões de cada imf *(apenas dos dados de teste)
+    rmse = list(np.full([imf.shape[1], n_regressors], float(0))) #armazena a raiz do erro quadrático médio para as regressões de cada imf *(apenas dos dados de teste)
+    
+
+    y_prev_total = list(np.full([imf.shape[1], n_regressors, len(imf[:,0][:-1])], float(0))) #armazena a previsão de cada modelo para cada imf
+    y_prev_modelo = list(np.full([1, n_regressors, len(imf[:,0][:-1])], float(0))) #armazena a previsão do modelo
+    
+    for i in range(imf.shape[1]):
+        
+        x_train, x_test, y_train, y_test = train_test_split(imf[:,i][:-1], imf[:,i][1:], test_size = porcentagem_teste, shuffle = False) #separa os dados de treinamento e de teste. test_size = 0.3 significa 30% dos dados totais (imf[:,i][:-1] para x; imf[:,i][1:] para y) será para teste
+
+        for j in range(n_regressors):
+            modelos[j][i] = GridSearchCV(modelos[j][i], param_grid[j], cv = 5, scoring = 'neg_root_mean_squared_error')
+            
+            modelos[j][i].fit(x_train.reshape(-1, 1), y_train.reshape(-1,1))
+            aux = modelos[j][i].predict(x_test.reshape(-1,1))#previsão para cada imf(i) de todos os modelos(j)
+            
+            for k in range(len(x_test)):
+                y_prev[i][j][k] = aux[k] #previsão para cada imf(i) de todos os modelos(j)
+                
+            mse[i][j] = mean_squared_error(y_test, y_prev[i][j])
+            mae[i][j] = mean_absolute_error(y_test, y_prev[i][j])
+            rmse[i][j] = mean_squared_error(y_test, y_prev[i][j], squared = False)
+        
+        
+            y_prev_total[i][j] = modelos[j][i].predict(imf[:,i][:-1].reshape(-1, 1)).reshape(len(s1)-1) #y_prev_total[i][j] significa a previsão para o imf i do modelo j
+            y_prev_modelo[0][j] += y_prev_total[i][j] #armazena a previsão do modelo, isto é, soma-se as previsões de cada imf. Sendo y_prev_modelo[0][j] a previsão do modelo j
+            
+    return imf, n_regressors, modelos, mse, mae, rmse, y_prev, y_prev_total, y_prev_modelo, x_train, x_test
+
+def prev_sem_EMD(s1):
+    
+    SVM = svm.SVR()
+    TREE = tree.DecisionTreeRegressor()
+    MLP = MLPRegressor()
+    KNN = KNeighborsRegressor()
+    
+    modelos2 = [SVM, TREE, MLP, KNN]
+
+    n_regressors = 4
+    
+    y_prev2 = list(np.full([n_regressors], float(0))) #armazena a previsão dos dados de teste para cada modelo
+    mse2 = list(np.full([n_regressors], float(0))) #armazena o erro quadrático médio de cada modelo
+    mae2 = list(np.full([n_regressors], float(0))) #armazena o erro absoluto médio de cada modelo
+    rmse2 = list(np.full([n_regressors], float(0))) #armazena a raiz do erro quadrático médio de cada modelo
+    
+    
+    y_prev_modelo2 = list(np.full([n_regressors], float(0))) #armazena a previsão do modelo
+        
+    
+    x_train, x_test, y_train, y_test = train_test_split(s1[:-1], s1[1:], test_size = porcentagem_teste, shuffle = False)
+    
+    for i in range(n_regressors):
+        modelos2[i] = GridSearchCV(modelos2[i], param_grid[i], cv = 5, scoring = 'neg_root_mean_squared_error')
+        modelos2[i].fit(x_train.reshape(-1,1), y_train.reshape(-1,1))
+        y_prev2[i] = modelos2[i].predict(x_test.reshape(-1,1))
+        mse2[i] = mean_squared_error(y_test, y_prev2[i])
+        mae2[i] = mean_absolute_error(y_test, y_prev2[i])
+        rmse2[i] = mean_squared_error(y_test, y_prev2[i], squared = False)
+        y_prev_modelo2[i] = modelos2[i].predict(s1[:-1].reshape(-1, 1))
+    
+    return modelos2, y_prev2, y_prev_modelo2, mse2, mae2, rmse2, y_test
+
+def resultado3(s1, n_regressors, y_prev, modelos, y_prev2, modelos2, y_test, y_prev_modelo, y_prev_modelo2):#(n_regressors, y_prev_modelo, y, modelos):
+    
+    mse_com_emd = []
+    mae_com_emd = []
+    nrmse_com_emd = []
+    mse_sem_emd = []
+    mae_sem_emd = []
+    nrmse_sem_emd = []
+    y_prev_test = list(np.full([n_regressors], float(0)))
+
+    amplitude = max(y_test) - min(y_test)
+
+    modelos3 = ["SVM", "DT", "MLP", "KNN"]
+    
+    figura, eixo = plt.subplots(nrows=2, ncols=2, sharex=True, sharey=True, figsize=(10, 8), dpi=400)
+    cont = 0
+    for i in range(n_regressors):
+        
+        if (i%2 == 0) and i!=0:
+            cont += 1
+
+        eixo[cont, i-2*cont].axvline(x=(len(s1)-1-len(y_prev2[0])), label = 'Limite dos dados de treinamento', color = 'gray', ls = "dashed", lw = 0.7)
+        
+        eixo[cont, i-2*cont].plot(y_prev_modelo[0][i], label = f'Previsão com EMD', color = "blue", lw = "2", alpha = 0.5)
+        
+        eixo[cont, i-2*cont].plot(y_prev_modelo2[i], label = f'Previsão sem EMD', color = "darkorange",  ls = "dotted", lw = "2.5")
+
+        eixo[cont, i-2*cont].plot(s1[1:], color = 'black', label = 'Real', lw = "1.7")
+        
+        
+        eixo[cont, i-2*cont].set_title(f'{modelos3[i]}')
+        
+        eixo[cont, i-2*cont].grid(axis = 'y')
+        
+        for j in range(imf.shape[1]):
+            y_prev_test[i] += y_prev[j][i]
+        
+        mse_com_emd.append(mean_squared_error(y_test, y_prev_test[i]))
+        mae_com_emd.append(mean_absolute_error(y_test, y_prev_test[i]))
+        nrmse_com_emd.append(mean_squared_error(y_test, y_prev_test[i], squared = False) / amplitude)
+        mse_sem_emd.append(mean_squared_error(y_test, y_prev2[i]))
+        mae_sem_emd.append(mean_absolute_error(y_test, y_prev2[i]))
+        nrmse_sem_emd.append(mean_squared_error(y_test, y_prev2[i], squared = False) / amplitude)
+        
+        
+    plt.legend(bbox_to_anchor = (0.3, 2.7))
+    plt.legend(ncol = 4, bbox_to_anchor = (1, 2.5))
+    figura.text(0.5, 0.02, "Número do tempo entre falhas", ha='center', size='xx-large')
+    figura.text(0.02, 0.5, 'Tempo entre falhas', va='center', rotation='vertical', size='xx-large')
+    plt.show()
+    
+    return mse_com_emd, mae_com_emd, nrmse_com_emd, mse_sem_emd, mae_sem_emd, nrmse_sem_emd
+
+def tabela_de_resultados():
+    modelos3 = ["SVM", "DT", "MLP", "KNN"]
+
+    print('\n************************|||TABELA DE RESULTADOS|||************************\n')
+    print('*******************************|||com emd|||******************************\n')
+    
+    tabela_com_emd = pd.DataFrame([], index=['MSE', 'MAE', 'NRMSE'], columns=modelos3)
+    tabela_com_emd.iloc[0] = mse_com_emd
+    tabela_com_emd.iloc[1] = mae_com_emd
+    tabela_com_emd.iloc[2] = nrmse_com_emd
+    print(tabela_com_emd)
+    
+    menor_mse = min(mse_com_emd)
+    menor_mae = min(mae_com_emd)
+    menor_nrmse = min(nrmse_com_emd)
+    print('\nMenor MSE: %f pertencente ao modelo %s' %(menor_mse, modelos3[mse_com_emd.index(menor_mse)]))
+    print('\nMenor MAE: %f pertencente ao modelo %s' %(menor_mae, modelos3[mae_com_emd.index(menor_mae)]))
+    print('\nMenor NRMSE: %f pertencente ao modelo %s' %(menor_nrmse, modelos2[nrmse_com_emd.index(menor_nrmse)]))
+    print('\n**************************************************************************')
+    
+    
+    print('\n\n*******************************|||sem emd|||******************************\n')
+    
+    tabela_sem_emd = pd.DataFrame([], index=['MSE', 'MAE', 'NRMSE'], columns=modelos3)
+    tabela_sem_emd.iloc[0] = mse_sem_emd
+    tabela_sem_emd.iloc[1] = mae_sem_emd
+    tabela_sem_emd.iloc[2] = nrmse_sem_emd
+    print(tabela_sem_emd)
+    
+    menor_mse = min(mse_sem_emd)
+    menor_mae = min(mae_sem_emd)
+    menor_nrmse = min(nrmse_sem_emd)
+    print('\nMenor MSE: %f pertencente ao modelo %s' %(menor_mse, modelos3[mse_sem_emd.index(menor_mse)]))
+    print('\nMenor MAE: %f pertencente ao modelo %s' %(menor_mae, modelos3[mae_sem_emd.index(menor_mae)]))
+    print('\nMenor NRMSE: %f pertencente ao modelo %s' %(menor_nrmse, modelos2[nrmse_sem_emd.index(menor_nrmse)]))
+    print('\n**************************************************************************')
+    
+    return tabela_com_emd, tabela_sem_emd
+
+def graficos_imf(imf, modelos2, n_regressors, y_prev_total):
+    
+    for i in range(imf.shape[1]):
+        
+        x_train, x_test, y_train, y_test = train_test_split(imf[:,i][:-1], imf[:,i][1:], test_size = porcentagem_teste, shuffle = False) #separa os dados de treinamento e de teste. test_size = 0.3 significa 30% dos dados totais (imf[:,i][:-1] para x; imf[:,i][1:] para y) será para teste
+
+        for j in range(n_regressors):
+            
+            plt.plot(y_prev_total[i][j], color = 'blue', label = f'IMF{i+1}_predict')
+            plt.plot(imf[:,i][1:], color = 'red', label = f'IMF{i+1}')
+            plt.legend()
+            plt.title(f"IMF {i+1} DO MODELO {modelos2[j]}")
+            plt.xlabel("Número do tempo entre falhas")
+            plt.ylabel("Tempo entre falhas")
+            plt.show()
+
+            mse_imfs = mean_squared_error(y_test, y_prev[i][j])
+            mae_imfs = mean_absolute_error(y_test, y_prev[i][j])
+            print('MSE: %f \nMAE: %f' %(mse_imfs, mae_imfs))      
+        
+
+##############################################################################################################################
+############################################################ MAIN ############################################################
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+!pip install emd==0.4.0
+#!pip install pyyaml==5.1
+import emd
+from sklearn.model_selection import train_test_split
+from sklearn import svm
+from sklearn import tree
+from sklearn.neural_network import MLPRegressor
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.model_selection import GridSearchCV
+param_grid = [{'C': np.linspace(1, 1000, 25), 'gamma': np.linspace(1, 1000, 25)}, 
+              {'max_features': ('auto', 'sqrt', 'log2', None), 'min_samples_split': range(1, 5), 'min_samples_leaf': range(1, 5)},
+              {'activation': ('identity', 'logistic', 'tanh', 'relu'), 'solver': ('adam', 'lbfgs', 'sgd'), 'tol': (1e-1, 1e-3, 1e-4, 1e-5, 1e-7)}, 
+              {'n_neighbors': range(1, 24, 1), 'weights': ('uniform', 'distance'), 'leaf_size': range(10, 60, 10)}
+             ]
+
+#df = pd.read_csv("Turbochargers-svm-Inicial.txt", sep ='\t')
+#df = pd.read_csv("Milestofailure-svm-Inicial.txt", sep ='\t')
+#df = pd.read_csv("Submarinedieselengine-svm-Inicial.txt", sep ='\t')
+#df = pd.read_csv("Jet_engine_failuresTBF.txt", sep ='\t')
+df = pd.read_csv("Construction_equipment_failures.txt", sep ='\t')
+
+porcentagem_teste = 0.2 #Porcentagem dos dados de teste
+
+s1 = dados(df)
+imf, n_regressors, modelos, mse, mae, rmse, y_prev, y_prev_total, y_prev_modelo, x_train, x_test = EMD(s1)
+modelos2, y_prev2, y_prev_modelo2, mse2, mae2, rmse2, y_test = prev_sem_EMD(s1)
+
+mse_com_emd, mae_com_emd, nrmse_com_emd, mse_sem_emd, mae_sem_emd, nrmse_sem_emd = resultado3(s1, n_regressors, y_prev, modelos, y_prev2, modelos2, y_test, y_prev_modelo, y_prev_modelo2)
+tabela_com_emd, tabela_sem_emd = tabela_de_resultados()
+
+emd.plotting.plot_imfs(imf, scale_y = True, cmap = True)
+graficos_imf(imf, modelos2, n_regressors, y_prev_total)
